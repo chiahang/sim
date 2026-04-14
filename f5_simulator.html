@@ -1,0 +1,397 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>F5 LTM 架構模擬器 (含 AP 場景)</title>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f0f3f4; margin: 0; padding: 20px; color: #2c3e50; }
+        .header { text-align: center; margin-bottom: 20px; }
+        
+        /* 控制面板設計 */
+        .controls-container { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 4px 15px rgba(0,0,0,0.05); margin-bottom: 30px; }
+        .scenario-panel { background-color: #e8f4f8; padding: 15px; border-radius: 6px; border-left: 4px solid #3498db; margin-bottom: 15px; display: flex; align-items: center; gap: 15px; }
+        .scenario-panel select { font-weight: bold; color: #2980b9; }
+        
+        .controls { display: flex; justify-content: center; gap: 20px; flex-wrap: wrap; align-items: center; }
+        .control-group { display: flex; align-items: center; gap: 10px; }
+        select, button { padding: 8px 12px; border: 1px solid #bdc3c7; border-radius: 4px; font-size: 14px; cursor: pointer; }
+        
+        button { background-color: #34495e; color: white; border: none; transition: background 0.3s; font-weight: bold; }
+        button:hover { background-color: #2c3e50; }
+        #btn-auto { background-color: #27ae60; }
+        #btn-auto:hover { background-color: #2ecc71; }
+        #btn-reset { background-color: #95a5a6; }
+        
+        /* 拓撲圖設計 */
+        .topology { display: flex; justify-content: space-between; align-items: center; max-width: 950px; margin: 0 auto; position: relative; height: 420px; }
+        .column { display: flex; flex-direction: column; justify-content: space-around; height: 100%; z-index: 2; }
+        
+        .node { width: 150px; padding: 15px; background: white; border-radius: 8px; text-align: center; box-shadow: 0 4px 6px rgba(0,0,0,0.1); border: 2px solid transparent; transition: all 0.3s; position: relative; }
+        .client-node { border-color: #8e44ad; }
+        .lb-node { border-color: #e67e22; background-color: #fdf2e9; width: 180px; }
+        .server-node { border-color: #27ae60; }
+        .server-node.down { border-color: #c0392b; background-color: #fadbd8; opacity: 0.6; }
+        
+        .node-title { font-weight: bold; margin-bottom: 8px; font-size: 15px; }
+        .badge { display: inline-block; padding: 3px 6px; border-radius: 4px; font-size: 11px; font-weight: bold; margin-bottom: 5px; }
+        .badge-profile { background-color: #d4e6f1; color: #2980b9; border: 1px solid #2980b9; }
+        
+        .stats { font-size: 12px; margin-bottom: 4px; color: #555; }
+        .cookie-indicator { font-size: 11px; color: #d35400; font-weight: bold; min-height: 15px; }
+        
+        .toggle-btn { background-color: #27ae60; width: 100%; margin-top: 10px; font-size: 12px; }
+        .server-node.down .toggle-btn { background-color: #c0392b; }
+        
+        /* 動畫封包 */
+        .packet { position: absolute; width: 14px; height: 14px; background-color: #3498db; border-radius: 50%; z-index: 10; transition: left 0.6s linear, top 0.6s linear; display: none; box-shadow: 0 0 5px rgba(0,0,0,0.3); }
+        .packet.has-cookie { background-color: #e67e22; border: 2px solid #fff; } /* 帶有 Cookie 的封包 */
+        .packet.has-ip-hash { background-color: #9b59b6; } /* Source IP 綁定的封包 */
+        
+        svg { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 1; pointer-events: none; }
+        line { stroke: #bdc3c7; stroke-width: 2; stroke-dasharray: 4, 4; }
+    </style>
+</head>
+<body>
+
+    <div class="header">
+        <h2>F5 LTM 架構模擬器</h2>
+        <p>模擬真實環境中「應用場景」對 Load Balancing 與 Persistence 的架構影響</p>
+    </div>
+
+    <div class="controls-container">
+        <div class="scenario-panel">
+            <label for="scenario"><strong>1. 選擇應用程式場景 (AP Type)：</strong></label>
+            <select id="scenario">
+                <option value="custom">-- 自訂手動設定 --</option>
+                <option value="stateless">無狀態 API / 微服務 / 靜態網頁</option>
+                <option value="stateful" selected>有狀態傳統 Web (需登入/購物車)</option>
+                <option value="database">長連線服務 (Database / FTP)</option>
+                <option value="udp">無連線 UDP 服務 (DNS / Syslog)</option>
+            </select>
+            <span style="font-size: 13px; color: #555;">(選擇後將自動套用 F5 最佳實踐配置)</span>
+        </div>
+
+        <div class="controls">
+            <div class="control-group">
+                <label>LTM Profile:</label>
+                <span id="display-profile" class="badge badge-profile">Standard + HTTP</span>
+            </div>
+            <div class="control-group">
+                <label for="algorithm">LB Method (演算法):</label>
+                <select id="algorithm">
+                    <option value="round-robin">Round Robin</option>
+                    <option value="least-connections" selected>Least Connections</option>
+                </select>
+            </div>
+            <div class="control-group">
+                <label for="persistence">Persistence (會話保持):</label>
+                <select id="persistence">
+                    <option value="none">None (無)</option>
+                    <option value="cookie" selected>Cookie Insert</option>
+                    <option value="source-address">Source Address Affinity</option>
+                </select>
+            </div>
+            <div style="border-left: 1px solid #ccc; height: 30px; margin: 0 10px;"></div>
+            <button id="btn-send">發送單一請求</button>
+            <button id="btn-auto">▶ 開啟自動流量</button>
+            <button id="btn-reset">清除數據</button>
+        </div>
+    </div>
+
+    <div class="topology" id="topology-container">
+        <svg>
+            <line x1="15%" y1="20%" x2="50%" y2="50%" />
+            <line x1="15%" y1="50%" x2="50%" y2="50%" />
+            <line x1="15%" y1="80%" x2="50%" y2="50%" />
+            <line x1="50%" y1="50%" x2="85%" y2="20%" />
+            <line x1="50%" y1="50%" x2="85%" y2="50%" />
+            <line x1="50%" y1="50%" x2="85%" y2="80%" />
+        </svg>
+
+        <div class="column" id="clients">
+            <div class="node client-node" id="client-1" data-ip="10.0.0.1">
+                <div class="node-title">Client 1</div>
+                <div class="stats">IP: 10.0.0.1</div>
+                <div class="cookie-indicator" id="cookie-c1"></div>
+            </div>
+            <div class="node client-node" id="client-2" data-ip="10.0.0.2">
+                <div class="node-title">Client 2</div>
+                <div class="stats">IP: 10.0.0.2</div>
+                <div class="cookie-indicator" id="cookie-c2"></div>
+            </div>
+            <div class="node client-node" id="client-3" data-ip="10.0.0.3">
+                <div class="node-title">Client 3</div>
+                <div class="stats">IP: 10.0.0.3</div>
+                <div class="cookie-indicator" id="cookie-c3"></div>
+            </div>
+        </div>
+
+        <div class="column">
+            <div class="node lb-node" id="lb">
+                <div class="node-title">F5 LTM (VS)</div>
+                <div class="stats" style="font-weight: bold; color: #d35400;" id="lb-status-text">Least Conn + Cookie</div>
+                <div class="stats">處理總數: <span id="lb-total">0</span></div>
+            </div>
+        </div>
+
+        <div class="column" id="servers">
+            <div class="node server-node" id="server-A" data-id="A">
+                <div class="node-title">Pool Member A</div>
+                <div class="stats">Active Conns: <span id="conn-A">0</span></div>
+                <div class="stats">Total Regs: <span id="total-A">0</span></div>
+                <button class="toggle-btn" onclick="toggleServer('A')">Monitor: UP</button>
+            </div>
+            <div class="node server-node" id="server-B" data-id="B">
+                <div class="node-title">Pool Member B</div>
+                <div class="stats">Active Conns: <span id="conn-B">0</span></div>
+                <div class="stats">Total Regs: <span id="total-B">0</span></div>
+                <button class="toggle-btn" onclick="toggleServer('B')">Monitor: UP</button>
+            </div>
+            <div class="node server-node" id="server-C" data-id="C">
+                <div class="node-title">Pool Member C</div>
+                <div class="stats">Active Conns: <span id="conn-C">0</span></div>
+                <div class="stats">Total Regs: <span id="total-C">0</span></div>
+                <button class="toggle-btn" onclick="toggleServer('C')">Monitor: UP</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // --- 核心狀態 ---
+        let servers = [
+            { id: 'A', status: 'up', conns: 0, total: 0 },
+            { id: 'B', status: 'up', conns: 0, total: 0 },
+            { id: 'C', status: 'up', conns: 0, total: 0 }
+        ];
+        
+        // 紀錄 Client 擁有的 Cookie { clientId: 'server_id' }
+        let clientCookies = { 'client-1': null, 'client-2': null, 'client-3': null };
+        
+        let rrIndex = 0;
+        let lbTotal = 0;
+        let autoInterval = null;
+
+        // --- UI 元素 ---
+        const uiScenario = document.getElementById('scenario');
+        const uiAlgo = document.getElementById('algorithm');
+        const uiPersist = document.getElementById('persistence');
+        const uiProfile = document.getElementById('display-profile');
+        const uiLbStatus = document.getElementById('lb-status-text');
+
+        // --- AP 場景預設配置表 ---
+        const presets = {
+            'stateless': { algo: 'least-connections', persist: 'none', profile: 'Standard + HTTP' },
+            'stateful':  { algo: 'least-connections', persist: 'cookie', profile: 'Standard + HTTP' },
+            'database':  { algo: 'least-connections', persist: 'source-address', profile: 'FastL4 (效能模式)' },
+            'udp':       { algo: 'round-robin', persist: 'none', profile: 'UDP Profile' }
+        };
+
+        // --- 事件監聽：切換情境 ---
+        uiScenario.addEventListener('change', (e) => {
+            const val = e.target.value;
+            if(presets[val]) {
+                uiAlgo.value = presets[val].algo;
+                uiPersist.value = presets[val].persist;
+                uiProfile.innerText = presets[val].profile;
+            }
+            updateLbStatusText();
+            clearCookies(); // 切換架構時清除舊的 Cookie
+        });
+
+        // 手動修改配置時，將場景設為 Custom
+        [uiAlgo, uiPersist].forEach(el => {
+            el.addEventListener('change', () => {
+                uiScenario.value = 'custom';
+                updateLbStatusText();
+                if(uiPersist.value !== 'cookie') clearCookies();
+            });
+        });
+
+        function updateLbStatusText() {
+            const algoText = uiAlgo.options[uiAlgo.selectedIndex].text.split(' ')[0];
+            const persText = uiPersist.options[uiPersist.selectedIndex].text.split(' ')[0];
+            uiLbStatus.innerText = `${algoText} + ${persText}`;
+            rrIndex = 0; // 重置 RR 指標
+        }
+
+        // 清除 Client 畫面上的 Cookie 標籤
+        function clearCookies() {
+            clientCookies = { 'client-1': null, 'client-2': null, 'client-3': null };
+            for(let i=1; i<=3; i++) {
+                document.getElementById(`cookie-c${i}`).innerText = '';
+            }
+        }
+
+        // --- Health Monitor 切換 ---
+        function toggleServer(id) {
+            const server = servers.find(s => s.id === id);
+            const node = document.getElementById(`server-${id}`);
+            const btn = node.querySelector('.toggle-btn');
+            
+            if (server.status === 'up') {
+                server.status = 'down';
+                node.classList.add('down');
+                btn.innerText = 'Monitor: DOWN';
+            } else {
+                server.status = 'up';
+                node.classList.remove('down');
+                btn.innerText = 'Monitor: UP';
+            }
+        }
+
+        // --- 核心轉發邏輯 ---
+        function getTargetServer(clientId, clientIp) {
+            const upServers = servers.filter(s => s.status === 'up');
+            if (upServers.length === 0) return null;
+
+            const algo = uiAlgo.value;
+            const persist = uiPersist.value;
+            let target = null;
+
+            // 1. 檢查 Persistence (會話保持)
+            if (persist === 'cookie') {
+                const existingCookie = clientCookies[clientId];
+                // 如果有 Cookie，且該伺服器存活，直接轉發
+                if (existingCookie && upServers.find(s => s.id === existingCookie)) {
+                    return upServers.find(s => s.id === existingCookie);
+                }
+                // 若無 Cookie 或伺服器 Down 了，繼續往下走 LB 演算法
+            } 
+            else if (persist === 'source-address') {
+                // 根據 IP 計算 Hash (模擬 F5 Source IP Affinity)
+                const lastOctet = parseInt(clientIp.split('.')[3]);
+                target = upServers[lastOctet % upServers.length];
+                return target; // 直接返回 Hash 結果
+            }
+
+            // 2. 執行 LB Algorithm (當無 Persistence，或 Cookie 首次建立/失效時)
+            if (algo === 'round-robin') {
+                target = upServers[rrIndex % upServers.length];
+                rrIndex++;
+            } 
+            else if (algo === 'least-connections') {
+                target = upServers.reduce((prev, curr) => (prev.conns < curr.conns) ? prev : curr);
+            }
+
+            // 3. 如果設定了 Cookie 模式，將新的分配結果記錄下來 (Set-Cookie)
+            if (persist === 'cookie' && target) {
+                clientCookies[clientId] = target.id;
+                document.getElementById(`cookie-c${clientId.split('-')[1]}`).innerText = `[Cookie: Server ${target.id}]`;
+            }
+
+            return target;
+        }
+
+        // --- 動畫輔助函數 ---
+        function getCenterCoords(element) {
+            const rect = element.getBoundingClientRect();
+            const containerRect = document.getElementById('topology-container').getBoundingClientRect();
+            return {
+                x: rect.left - containerRect.left + rect.width / 2,
+                y: rect.top - containerRect.top + rect.height / 2
+            };
+        }
+
+        // --- 發送請求 ---
+        function sendRequest() {
+            const clientIdx = Math.floor(Math.random() * 3);
+            const clientId = `client-${clientIdx + 1}`;
+            const clientNode = document.getElementById(clientId);
+            const clientIp = clientNode.getAttribute('data-ip');
+            
+            const packet = document.createElement('div');
+            packet.className = 'packet';
+            
+            // 視覺化：如果該 Client 目前擁有 Cookie，或者使用 IP Hash，改變封包顏色
+            if (uiPersist.value === 'cookie' && clientCookies[clientId]) packet.classList.add('has-cookie');
+            if (uiPersist.value === 'source-address') packet.classList.add('has-ip-hash');
+            
+            document.getElementById('topology-container').appendChild(packet);
+
+            const startCoords = getCenterCoords(clientNode);
+            const lbCoords = getCenterCoords(document.getElementById('lb'));
+            
+            packet.style.left = `${startCoords.x - 7}px`;
+            packet.style.top = `${startCoords.y - 7}px`;
+            packet.style.display = 'block';
+
+            packet.getBoundingClientRect(); // Trigger reflow
+
+            // 移動到 LB
+            packet.style.left = `${lbCoords.x - 7}px`;
+            packet.style.top = `${lbCoords.y - 7}px`;
+
+            setTimeout(() => {
+                lbTotal++;
+                document.getElementById('lb-total').innerText = lbTotal;
+
+                // LB 決定目標伺服器
+                const targetServer = getTargetServer(clientId, clientIp);
+                
+                if (!targetServer) {
+                    packet.style.backgroundColor = '#e74c3c'; // Drop 封包
+                    setTimeout(() => packet.remove(), 300);
+                    return;
+                }
+
+                // 準備送往 Server
+                const serverNode = document.getElementById(`server-${targetServer.id}`);
+                const endCoords = getCenterCoords(serverNode);
+                
+                packet.style.left = `${endCoords.x - 7}px`;
+                packet.style.top = `${endCoords.y - 7}px`;
+
+                setTimeout(() => {
+                    packet.remove();
+                    
+                    targetServer.conns++;
+                    targetServer.total++;
+                    document.getElementById(`conn-${targetServer.id}`).innerText = targetServer.conns;
+                    document.getElementById(`total-${targetServer.id}`).innerText = targetServer.total;
+                    
+                    // 模擬處理時間
+                    const processTime = Math.floor(Math.random() * 1200) + 400;
+                    setTimeout(() => {
+                        targetServer.conns--;
+                        document.getElementById(`conn-${targetServer.id}`).innerText = targetServer.conns;
+                    }, processTime);
+
+                }, 600);
+
+            }, 600);
+        }
+
+        // --- 按鈕綁定 ---
+        document.getElementById('btn-send').addEventListener('click', sendRequest);
+        
+        const btnAuto = document.getElementById('btn-auto');
+        btnAuto.addEventListener('click', () => {
+            if (autoInterval) {
+                clearInterval(autoInterval);
+                autoInterval = null;
+                btnAuto.innerHTML = '▶ 開啟自動流量';
+                btnAuto.style.backgroundColor = '#27ae60';
+            } else {
+                autoInterval = setInterval(sendRequest, 350);
+                btnAuto.innerHTML = '⏸ 暫停自動流量';
+                btnAuto.style.backgroundColor = '#e67e22';
+            }
+        });
+
+        document.getElementById('btn-reset').addEventListener('click', () => {
+            servers.forEach(s => { s.conns = 0; s.total = 0; });
+            lbTotal = 0; rrIndex = 0;
+            document.getElementById('lb-total').innerText = 0;
+            ['A', 'B', 'C'].forEach(id => {
+                document.getElementById(`conn-${id}`).innerText = 0;
+                document.getElementById(`total-${id}`).innerText = 0;
+            });
+            clearCookies();
+        });
+
+        // 初始化狀態文字
+        updateLbStatusText();
+    </script>
+</body>
+</html>

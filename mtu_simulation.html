@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MTU 封包傳輸與分片模擬器</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: #f4f7f9;
+            color: #333;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 20px;
+            margin: 0;
+        }
+        .container {
+            background: white;
+            padding: 25px;
+            border-radius: 12px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+            width: 100%;
+            max-width: 800px;
+        }
+        h1 { font-size: 1.5rem; text-align: center; margin-bottom: 20px; color: #2c3e50; }
+        
+        .controls {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            margin-bottom: 30px;
+            background: #f8fafc;
+            padding: 20px;
+            border-radius: 8px;
+        }
+        .control-group { display: flex; flex-direction: column; }
+        label { font-size: 0.9rem; font-weight: bold; margin-bottom: 8px; }
+        input[type="range"] { width: 100%; cursor: pointer; }
+        .val-display { font-family: monospace; color: #3498db; font-weight: bold; }
+        
+        .checkbox-group {
+            grid-column: span 2;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-size: 0.9rem;
+        }
+
+        .btn-send {
+            grid-column: span 2;
+            padding: 12px;
+            background-color: #3498db;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            font-size: 1rem;
+            font-weight: bold;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        .btn-send:hover { background-color: #2980b9; }
+
+        #simulation-area {
+            position: relative;
+            height: 250px;
+            background: #fff;
+            border: 2px dashed #e2e8f0;
+            border-radius: 8px;
+            overflow: hidden;
+            margin-bottom: 20px;
+        }
+
+        .node {
+            position: absolute;
+            top: 50%;
+            transform: translateY(-50%);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            width: 80px;
+            z-index: 10;
+        }
+        .node-icon { font-size: 2.5rem; }
+        .node-label { font-size: 0.8rem; font-weight: bold; margin-top: 5px; }
+
+        #sender { left: 20px; }
+        #router { left: 50%; transform: translate(-50%, -50%); }
+        #receiver { right: 20px; }
+
+        .router-gate {
+            position: absolute;
+            left: 50%;
+            top: 50%;
+            transform: translate(-50%, -50%);
+            width: 4px;
+            height: 100px;
+            background: #cbd5e0;
+            border-radius: 2px;
+        }
+
+        .packet {
+            position: absolute;
+            top: 50%;
+            transform: translateY(-50%);
+            background-color: #3498db;
+            color: white;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.7rem;
+            font-weight: bold;
+            border-radius: 4px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+            transition: all 0.1s linear;
+        }
+
+        #status-box {
+            padding: 15px;
+            border-radius: 6px;
+            font-size: 0.95rem;
+            min-height: 50px;
+            line-height: 1.5;
+            background: #f1f5f9;
+            border-left: 5px solid #cbd5e0;
+        }
+
+        .status-success { border-left-color: #2ecc71; background: #ecfdf5; color: #065f46; }
+        .status-error { border-left-color: #e74c3c; background: #fef2f2; color: #991b1b; }
+        .status-warning { border-left-color: #f1c40f; background: #fffbeb; color: #92400e; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>MTU 封包傳輸與分片模擬器</h1>
+
+    <div class="controls">
+        <div class="control-group">
+            <label>原始封包大小: <span id="p-size-val" class="val-display">1500</span> Bytes</label>
+            <input type="range" id="p-size" min="500" max="2000" value="1500">
+        </div>
+        <div class="control-group">
+            <label>路由器 MTU 限制: <span id="mtu-val" class="val-display">1200</span> Bytes</label>
+            <input type="range" id="mtu" min="500" max="2000" value="1200">
+        </div>
+        <div class="checkbox-group">
+            <input type="checkbox" id="df-flag" checked>
+            <label for="df-flag">設定 DF (Don't Fragment) 標籤：禁止路由器對此封包進行分片</label>
+        </div>
+        <button class="btn-send" onclick="startSimulation()">發送封包</button>
+    </div>
+
+    <div id="simulation-area">
+        <div class="node" id="sender">
+            <span class="node-icon">💻</span>
+            <span class="node-label">發送端</span>
+        </div>
+        <div class="router-gate"></div>
+        <div class="node" id="router">
+            <span class="node-icon">🛡️</span>
+            <span class="node-label">路由器</span>
+        </div>
+        <div class="node" id="receiver">
+            <span class="node-icon">🖥️</span>
+            <span class="node-label">接收端</span>
+        </div>
+    </div>
+
+    <div id="status-box">準備就緒。請調整參數並點擊發送。</div>
+</div>
+
+<script>
+    const pSizeInput = document.getElementById('p-size');
+    const mtuInput = document.getElementById('mtu');
+    const dfFlag = document.getElementById('df-flag');
+    const statusBox = document.getElementById('status-box');
+    const simArea = document.getElementById('simulation-area');
+
+    // 更新數值顯示
+    pSizeInput.oninput = () => document.getElementById('p-size-val').innerText = pSizeInput.value;
+    mtuInput.oninput = () => document.getElementById('mtu-val').innerText = mtuInput.value;
+
+    function startSimulation() {
+        // 清除舊封包
+        const oldPackets = document.querySelectorAll('.packet');
+        oldPackets.forEach(p => p.remove());
+
+        const packetSize = parseInt(pSizeInput.value);
+        const mtu = parseInt(mtuInput.value);
+        const isDF = dfFlag.checked;
+
+        statusBox.className = '';
+        statusBox.innerText = '正在傳送封包...';
+
+        // 建立原始封包
+        const pkt = document.createElement('div');
+        pkt.className = 'packet';
+        pkt.innerText = packetSize;
+        // 視覺大小根據位元組比例縮放
+        const visualWidth = Math.max(40, packetSize / 15);
+        pkt.style.width = visualWidth + 'px';
+        pkt.style.height = '40px';
+        pkt.style.left = '80px';
+        simArea.appendChild(pkt);
+
+        // 動畫第一階段：移向路由器
+        let pos = 80;
+        const routerPos = simArea.offsetWidth / 2 - visualWidth / 2;
+        
+        const moveInterval = setInterval(() => {
+            pos += 5;
+            pkt.style.left = pos + 'px';
+
+            if (pos >= routerPos) {
+                clearInterval(moveInterval);
+                handleRouterLogic(pkt, packetSize, mtu, isDF);
+            }
+        }, 20);
+    }
+
+    function handleRouterLogic(pkt, size, mtu, isDF) {
+        if (size <= mtu) {
+            // 情況 A: 順利通過
+            statusBox.innerText = '傳輸成功：封包大小 (' + size + ') 小於 MTU (' + mtu + ')，無須分片。';
+            statusBox.classList.add('status-success');
+            finishPath(pkt);
+        } else if (isDF) {
+            // 情況 B: 超過大小且有 DF，丟棄
+            pkt.style.backgroundColor = '#e74c3c';
+            pkt.innerText = '❌';
+            statusBox.innerText = '傳輸失敗：封包過大 (' + size + ') 且帶有 DF 標籤，路由器無法分片並直接丟棄。';
+            statusBox.classList.add('status-error');
+            
+            setTimeout(() => {
+                pkt.style.opacity = '0';
+                // 模擬 ICMP 退回
+                const icmp = document.createElement('div');
+                icmp.className = 'packet';
+                icmp.innerText = 'ICMP';
+                icmp.style.backgroundColor = '#95a5a6';
+                icmp.style.width = '40px';
+                icmp.style.height = '30px';
+                icmp.style.left = (simArea.offsetWidth / 2) + 'px';
+                simArea.appendChild(icmp);
+                
+                let bPos = simArea.offsetWidth / 2;
+                const bInterval = setInterval(() => {
+                    bPos -= 7;
+                    icmp.style.left = bPos + 'px';
+                    if (bPos <= 100) {
+                        clearInterval(bInterval);
+                        statusBox.innerText += ' (已收到路由器的退件通知：Fragmentation Needed)';
+                    }
+                }, 20);
+            }, 500);
+        } else {
+            // 情況 C: 分片
+            statusBox.innerText = '發生 IP 分片：封包過大但允許分片。路由器將封包切分為多個符合 MTU 的片段。';
+            statusBox.classList.add('status-warning');
+            pkt.remove();
+
+            const fragmentCount = Math.ceil(size / mtu);
+            for (let i = 0; i < fragmentCount; i++) {
+                setTimeout(() => {
+                    const fragSize = (i === fragmentCount - 1) ? (size % mtu || mtu) : mtu;
+                    const fPkt = document.createElement('div');
+                    fPkt.className = 'packet';
+                    fPkt.innerText = fragSize;
+                    fPkt.style.width = Math.max(30, fragSize / 15) + 'px';
+                    fPkt.style.height = '30px';
+                    fPkt.style.left = (simArea.offsetWidth / 2) + 'px';
+                    // 讓碎片位置稍微錯開
+                    fPkt.style.top = (50 + (i * 10)) + '%';
+                    simArea.appendChild(fPkt);
+                    finishPath(fPkt, 1500 + (i * 200));
+                }, i * 300);
+            }
+        }
+    }
+
+    function finishPath(element, delay = 0) {
+        setTimeout(() => {
+            let pos = parseFloat(element.style.left);
+            const endPos = simArea.offsetWidth - 120;
+            const moveInterval = setInterval(() => {
+                pos += 5;
+                element.style.left = pos + 'px';
+                if (pos >= endPos) {
+                    clearInterval(moveInterval);
+                    element.style.backgroundColor = '#2ecc71';
+                }
+            }, 20);
+        }, delay);
+    }
+</script>
+
+</body>
+</html>

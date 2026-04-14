@@ -3,13 +3,13 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>F5 LTM 架構模擬器 (含 AP 場景)</title>
+    <title>F5 LTM 架構模擬器</title>
     <style>
         body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f0f3f4; margin: 0; padding: 20px; color: #2c3e50; }
         .header { text-align: center; margin-bottom: 20px; }
         
         /* 控制面板設計 */
-        .controls-container { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 4px 15px rgba(0,0,0,0.05); margin-bottom: 30px; }
+        .controls-container { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 4px 15px rgba(0,0,0,0.05); margin-bottom: 20px; }
         .scenario-panel { background-color: #e8f4f8; padding: 15px; border-radius: 6px; border-left: 4px solid #3498db; margin-bottom: 15px; display: flex; align-items: center; gap: 15px; }
         .scenario-panel select { font-weight: bold; color: #2980b9; }
         
@@ -24,7 +24,7 @@
         #btn-reset { background-color: #95a5a6; }
         
         /* 拓撲圖設計 */
-        .topology { display: flex; justify-content: space-between; align-items: center; max-width: 950px; margin: 0 auto; position: relative; height: 420px; }
+        .topology { display: flex; justify-content: space-between; align-items: center; max-width: 950px; margin: 0 auto; position: relative; height: 400px; }
         .column { display: flex; flex-direction: column; justify-content: space-around; height: 100%; z-index: 2; }
         
         .node { width: 150px; padding: 15px; background: white; border-radius: 8px; text-align: center; box-shadow: 0 4px 6px rgba(0,0,0,0.1); border: 2px solid transparent; transition: all 0.3s; position: relative; }
@@ -45,31 +45,40 @@
         
         /* 動畫封包 */
         .packet { position: absolute; width: 14px; height: 14px; background-color: #3498db; border-radius: 50%; z-index: 10; transition: left 0.6s linear, top 0.6s linear; display: none; box-shadow: 0 0 5px rgba(0,0,0,0.3); }
-        .packet.has-cookie { background-color: #e67e22; border: 2px solid #fff; } /* 帶有 Cookie 的封包 */
-        .packet.has-ip-hash { background-color: #9b59b6; } /* Source IP 綁定的封包 */
+        .packet.has-cookie { background-color: #e67e22; border: 2px solid #fff; }
+        .packet.has-ip-hash { background-color: #9b59b6; }
         
         svg { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 1; pointer-events: none; }
         line { stroke: #bdc3c7; stroke-width: 2; stroke-dasharray: 4, 4; }
+
+        /* --- 新增：說明面板設計 --- */
+        .explanation-panel { background: white; padding: 25px; border-radius: 8px; box-shadow: 0 4px 15px rgba(0,0,0,0.05); margin-top: 20px; border-left: 6px solid #e67e22; }
+        .explanation-panel h3 { margin-top: 0; color: #2c3e50; font-size: 18px; border-bottom: 2px solid #f0f3f4; padding-bottom: 10px; margin-bottom: 15px; display: flex; align-items: center; gap: 10px; }
+        .exp-section { margin-bottom: 12px; font-size: 15px; line-height: 1.6; color: #444; background: #fdfefe; padding: 10px 15px; border-radius: 6px; border: 1px solid #ecf0f1; }
+        .exp-label { font-weight: bold; display: inline-block; min-width: 140px; }
+        .exp-label.scenario { color: #2980b9; }
+        .exp-label.algo { color: #16a085; }
+        .exp-label.persist { color: #d35400; }
+        .exp-label.profile { color: #8e44ad; }
     </style>
 </head>
 <body>
 
     <div class="header">
-        <h2>F5 LTM 架構模擬器</h2>
-        <p>模擬真實環境中「應用場景」對 Load Balancing 與 Persistence 的架構影響</p>
+        <h2>F5 LTM 架構決策與流量模擬器</h2>
+        <p>選擇應用場景，觀察 F5 的自動推薦配置與底層運作原理</p>
     </div>
 
     <div class="controls-container">
         <div class="scenario-panel">
             <label for="scenario"><strong>1. 選擇應用程式場景 (AP Type)：</strong></label>
             <select id="scenario">
-                <option value="custom">-- 自訂手動設定 --</option>
+                <option value="stateful" selected>有狀態傳統 Web (需維持登入/購物車)</option>
                 <option value="stateless">無狀態 API / 微服務 / 靜態網頁</option>
-                <option value="stateful" selected>有狀態傳統 Web (需登入/購物車)</option>
-                <option value="database">長連線服務 (Database / FTP)</option>
+                <option value="database">長連線 TCP 服務 (Database / FTP)</option>
                 <option value="udp">無連線 UDP 服務 (DNS / Syslog)</option>
+                <option value="custom">-- 自訂手動設定 --</option>
             </select>
-            <span style="font-size: 13px; color: #555;">(選擇後將自動套用 F5 最佳實踐配置)</span>
         </div>
 
         <div class="controls">
@@ -157,6 +166,26 @@
         </div>
     </div>
 
+    <div class="explanation-panel">
+        <h3>💡 架構原理解析</h3>
+        <div id="exp-scenario-box" class="exp-section" style="background-color: #ebf5fb;">
+            <span class="exp-label scenario">📍 場景策略：</span>
+            <span id="exp-scenario-text">載入中...</span>
+        </div>
+        <div class="exp-section">
+            <span class="exp-label profile">⚙️ Profile：</span>
+            <span id="exp-profile-text">載入中...</span>
+        </div>
+        <div class="exp-section">
+            <span class="exp-label algo">🔀 LB Method：</span>
+            <span id="exp-algo-text">載入中...</span>
+        </div>
+        <div class="exp-section">
+            <span class="exp-label persist">🧲 Persistence：</span>
+            <span id="exp-persist-text">載入中...</span>
+        </div>
+    </div>
+
     <script>
         // --- 核心狀態 ---
         let servers = [
@@ -164,10 +193,7 @@
             { id: 'B', status: 'up', conns: 0, total: 0 },
             { id: 'C', status: 'up', conns: 0, total: 0 }
         ];
-        
-        // 紀錄 Client 擁有的 Cookie { clientId: 'server_id' }
         let clientCookies = { 'client-1': null, 'client-2': null, 'client-3': null };
-        
         let rrIndex = 0;
         let lbTotal = 0;
         let autoInterval = null;
@@ -179,15 +205,68 @@
         const uiProfile = document.getElementById('display-profile');
         const uiLbStatus = document.getElementById('lb-status-text');
 
-        // --- AP 場景預設配置表 ---
+        // --- 說明文案庫 (Dictionaries) ---
+        const textExplanations = {
+            scenario: {
+                'stateless': '無狀態架構 (如 RESTful API)，由於伺服器不需要記憶使用者狀態，我們唯一的目標是「最大化吞吐量與效能」，因此將流量完全打散是最佳解。',
+                'stateful': '傳統 Web 系統會將使用者的登入 Session、購物車暫存在特定伺服器的記憶體中。為避免切換頁面時被迫登出，必須依賴 F5 強制讓流量回到同一節點。',
+                'database': 'TCP 長連線應用。一旦連線建立，除非斷線，否則流量不會重新分配。這類應用極度吃重底層硬體轉發效能，且不能因為新節點加入而輕易斷開現有連線。',
+                'udp': 'UDP 是無狀態、射後不理的封包。處理速度極快，通常不需要解析應用層內容，只需確保每個封包公平地發送給後端節點即可。',
+                'custom': '您目前正在進行自訂配置。請參考下方各項設定的獨立運作原理。'
+            },
+            profile: {
+                'Standard + HTTP': '啟用 <b>Standard (Full Proxy)</b> 並掛載 HTTP Profile。F5 會深度解析 Layer 7 的 HTTP 標頭，允許修改內容、插入 Cookie，或執行 iRules，但會消耗較多 CPU 資源。',
+                'FastL4 (效能模式)': '啟用 <b>FastL4 (Performance L4)</b>。F5 不介入應用層解析，直接由硬體晶片 (eCMP) 執行 Layer 4 封包轉發。具備極低延遲、極高吞吐量優勢。',
+                'UDP Profile': '針對 UDP 封包優化的基礎 Profile，適合快速且大量的無連線傳輸。'
+            },
+            algo: {
+                'round-robin': '<b>Round Robin (輪詢)</b>：無視伺服器當下的真實負擔，絕對依序 (A→B→C) 發送請求。若後端每台伺服器效能一模一樣，且每個請求處理時間極短，這是最高效的選擇。',
+                'least-connections': '<b>Least Connections (最少連線)</b>：F5 會即時監控後端節點，並將新請求派發給當下「處理中連線數最少」的伺服器。能有效防止單一伺服器因處理大資料量而發生過載。'
+            },
+            persist: {
+                'none': '<b>無 (None)</b>：關閉會話保持。F5 完全遵照 LB Method 分配每一次新連線，能達成最完美的負載平均，動畫中可見流量均勻飛向不同節點。',
+                'cookie': '<b>Cookie Insert</b>：針對 HTTP 服務的黃金標準。F5 會在回覆給客戶端時偷偷塞入專屬 Cookie。下次客戶端來訪時，F5 讀取 Cookie 就能精準導航。動畫中帶有橘色光圈的封包代表已綁定。',
+                'source-address': '<b>Source Address Affinity</b>：F5 根據來源 IP 計算 Hash 值並寫入記憶體表。只要 IP 不變，就會被送到同一台伺服器。適用於不支援 Cookie 的 L4 傳輸。動畫中紫色封包代表受 IP 綁定。'
+            }
+        };
+
         const presets = {
-            'stateless': { algo: 'least-connections', persist: 'none', profile: 'Standard + HTTP' },
             'stateful':  { algo: 'least-connections', persist: 'cookie', profile: 'Standard + HTTP' },
+            'stateless': { algo: 'least-connections', persist: 'none', profile: 'Standard + HTTP' },
             'database':  { algo: 'least-connections', persist: 'source-address', profile: 'FastL4 (效能模式)' },
             'udp':       { algo: 'round-robin', persist: 'none', profile: 'UDP Profile' }
         };
 
-        // --- 事件監聽：切換情境 ---
+        // --- 更新說明面板邏輯 ---
+        function updateExplanationPanel() {
+            const currentScenario = uiScenario.value;
+            const currentAlgo = uiAlgo.value;
+            const currentPersist = uiPersist.value;
+            const currentProfile = uiProfile.innerText;
+
+            // 根據是否為 Custom 調整 Scenario 區塊的顯示
+            const scenarioBox = document.getElementById('exp-scenario-box');
+            if (currentScenario === 'custom') {
+                scenarioBox.style.backgroundColor = '#f4f6f7';
+                document.getElementById('exp-scenario-text').innerHTML = textExplanations.scenario['custom'];
+            } else {
+                scenarioBox.style.backgroundColor = '#ebf5fb';
+                document.getElementById('exp-scenario-text').innerHTML = textExplanations.scenario[currentScenario];
+            }
+
+            // 更新其他欄位
+            document.getElementById('exp-profile-text').innerHTML = textExplanations.profile[currentProfile] || '自訂 Profile 設定';
+            document.getElementById('exp-algo-text').innerHTML = textExplanations.algo[currentAlgo];
+            document.getElementById('exp-persist-text').innerHTML = textExplanations.persist[currentPersist];
+            
+            // 更新拓撲圖中間的 F5 狀態字樣
+            const algoShort = uiAlgo.options[uiAlgo.selectedIndex].text.split(' ')[0];
+            const persShort = uiPersist.options[uiPersist.selectedIndex].text.split(' ')[0];
+            uiLbStatus.innerText = `${algoShort} + ${persShort}`;
+            rrIndex = 0; 
+        }
+
+        // --- 事件監聽 ---
         uiScenario.addEventListener('change', (e) => {
             const val = e.target.value;
             if(presets[val]) {
@@ -195,25 +274,17 @@
                 uiPersist.value = presets[val].persist;
                 uiProfile.innerText = presets[val].profile;
             }
-            updateLbStatusText();
-            clearCookies(); // 切換架構時清除舊的 Cookie
+            clearCookies(); 
+            updateExplanationPanel();
         });
 
-        // 手動修改配置時，將場景設為 Custom
         [uiAlgo, uiPersist].forEach(el => {
             el.addEventListener('change', () => {
-                uiScenario.value = 'custom';
-                updateLbStatusText();
+                uiScenario.value = 'custom'; // 手動更改則跳至 Custom
                 if(uiPersist.value !== 'cookie') clearCookies();
+                updateExplanationPanel();
             });
         });
-
-        function updateLbStatusText() {
-            const algoText = uiAlgo.options[uiAlgo.selectedIndex].text.split(' ')[0];
-            const persText = uiPersist.options[uiPersist.selectedIndex].text.split(' ')[0];
-            uiLbStatus.innerText = `${algoText} + ${persText}`;
-            rrIndex = 0; // 重置 RR 指標
-        }
 
         // 清除 Client 畫面上的 Cookie 標籤
         function clearCookies() {
@@ -249,23 +320,18 @@
             const persist = uiPersist.value;
             let target = null;
 
-            // 1. 檢查 Persistence (會話保持)
             if (persist === 'cookie') {
                 const existingCookie = clientCookies[clientId];
-                // 如果有 Cookie，且該伺服器存活，直接轉發
                 if (existingCookie && upServers.find(s => s.id === existingCookie)) {
                     return upServers.find(s => s.id === existingCookie);
                 }
-                // 若無 Cookie 或伺服器 Down 了，繼續往下走 LB 演算法
             } 
             else if (persist === 'source-address') {
-                // 根據 IP 計算 Hash (模擬 F5 Source IP Affinity)
                 const lastOctet = parseInt(clientIp.split('.')[3]);
                 target = upServers[lastOctet % upServers.length];
-                return target; // 直接返回 Hash 結果
+                return target;
             }
 
-            // 2. 執行 LB Algorithm (當無 Persistence，或 Cookie 首次建立/失效時)
             if (algo === 'round-robin') {
                 target = upServers[rrIndex % upServers.length];
                 rrIndex++;
@@ -274,7 +340,6 @@
                 target = upServers.reduce((prev, curr) => (prev.conns < curr.conns) ? prev : curr);
             }
 
-            // 3. 如果設定了 Cookie 模式，將新的分配結果記錄下來 (Set-Cookie)
             if (persist === 'cookie' && target) {
                 clientCookies[clientId] = target.id;
                 document.getElementById(`cookie-c${clientId.split('-')[1]}`).innerText = `[Cookie: Server ${target.id}]`;
@@ -303,7 +368,6 @@
             const packet = document.createElement('div');
             packet.className = 'packet';
             
-            // 視覺化：如果該 Client 目前擁有 Cookie，或者使用 IP Hash，改變封包顏色
             if (uiPersist.value === 'cookie' && clientCookies[clientId]) packet.classList.add('has-cookie');
             if (uiPersist.value === 'source-address') packet.classList.add('has-ip-hash');
             
@@ -316,9 +380,8 @@
             packet.style.top = `${startCoords.y - 7}px`;
             packet.style.display = 'block';
 
-            packet.getBoundingClientRect(); // Trigger reflow
+            packet.getBoundingClientRect();
 
-            // 移動到 LB
             packet.style.left = `${lbCoords.x - 7}px`;
             packet.style.top = `${lbCoords.y - 7}px`;
 
@@ -326,16 +389,14 @@
                 lbTotal++;
                 document.getElementById('lb-total').innerText = lbTotal;
 
-                // LB 決定目標伺服器
                 const targetServer = getTargetServer(clientId, clientIp);
                 
                 if (!targetServer) {
-                    packet.style.backgroundColor = '#e74c3c'; // Drop 封包
+                    packet.style.backgroundColor = '#e74c3c';
                     setTimeout(() => packet.remove(), 300);
                     return;
                 }
 
-                // 準備送往 Server
                 const serverNode = document.getElementById(`server-${targetServer.id}`);
                 const endCoords = getCenterCoords(serverNode);
                 
@@ -350,7 +411,6 @@
                     document.getElementById(`conn-${targetServer.id}`).innerText = targetServer.conns;
                     document.getElementById(`total-${targetServer.id}`).innerText = targetServer.total;
                     
-                    // 模擬處理時間
                     const processTime = Math.floor(Math.random() * 1200) + 400;
                     setTimeout(() => {
                         targetServer.conns--;
@@ -391,7 +451,7 @@
         });
 
         // 初始化狀態文字
-        updateLbStatusText();
+        updateExplanationPanel();
     </script>
 </body>
 </html>
